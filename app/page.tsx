@@ -1,69 +1,66 @@
+"use client";
+
 import Image from "next/image";
+import { FormEvent, useEffect, useState } from "react";
+
+type TrackingMode = "pssAwb" | "partnerAwb";
+type TrackingSubmission = "idle" | "loading" | "success" | "invalid" | "unavailable";
+type TrackingFormModel = { mode: TrackingMode; reference: string; submission: TrackingSubmission };
+
+const services = [
+  ["01", "Air freight", "Time-critical cargo, precisely coordinated."],
+  ["02", "Surface freight", "Reliable road movement, mile after mile."],
+  ["03", "Train freight", "Flexible capacity for every kind of load."],
+  ["04", "International", "Cross-border logistics without the friction."],
+  ["05", "ATA freight", "Airport-to-airport, with every detail in view."],
+];
+
+const capabilities = ["Booking", "Tracking", "Pickup", "RTO / NDR", "Wallet & billing", "Reports & support"];
+
+function Arrow() { return <span aria-hidden="true">↗</span>; }
+
+function TrackingCommand() {
+  const [form, setForm] = useState<TrackingFormModel>({ mode: "pssAwb", reference: "", submission: "idle" });
+  const setMode = (mode: TrackingMode) => setForm((current) => ({ ...current, mode, submission: "idle" }));
+  const submit = (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const reference = form.reference.trim();
+    if (!reference) { setForm((current) => ({ ...current, submission: "invalid" })); return; }
+    setForm((current) => ({ ...current, submission: "loading" }));
+    window.setTimeout(() => {
+      const found = reference.toLowerCase().includes("pss") || reference === "312200621";
+      setForm((current) => ({ ...current, submission: found ? "success" : "unavailable" }));
+    }, 650);
+  };
+  return <div className="tracking-command" id="track">
+    <div className="command-heading"><div><span className="orange-kicker">SHIPMENT VISIBILITY</span><h2>Where is it now?</h2></div><span className="portal-status"><i /> PSS PORTAL</span></div>
+    <div className="mode-tabs" role="tablist" aria-label="Tracking reference type">{(["pssAwb", "partnerAwb"] as TrackingMode[]).map((mode) => <button key={mode} type="button" role="tab" aria-selected={form.mode === mode} className={form.mode === mode ? "active" : ""} onClick={() => setMode(mode)}>{mode === "pssAwb" ? "PSS Logistics AWB" : "Partner AWB"}</button>)}</div>
+    <form onSubmit={submit}><label htmlFor="tracking-reference">Enter your {form.mode === "pssAwb" ? "PSS AWB" : "partner reference No."}</label><div className="command-input"><input id="tracking-reference" value={form.reference} onChange={(event) => setForm((current) => ({ ...current, reference: event.target.value, submission: "idle" }))} placeholder="Enter AWB or partner reference No." autoComplete="off" /><button type="submit" disabled={form.submission === "loading"}>{form.submission === "loading" ? "Checking…" : "Track"} <Arrow /></button></div></form>
+    {form.submission === "invalid" && <p className="form-error">Enter a reference number to start tracking.</p>}
+    {form.submission === "unavailable" && <p className="form-error">We could not find that reference. Check the number and try again.</p>}
+    {form.submission === "success" && <div className="demo-result"><span>DEMO RESULT · CURRENT STATUS</span><strong>In transit <b>·</b> Bengaluru hub</strong><small>Preview data only — connect your production tracking service later.</small></div>}
+    <a className="full-track" href="https://client.psslogistics.in/dashboard/shipmentTracking">View full tracking details <Arrow /></a>
+  </div>;
+}
+
+function ShipmentPreview() { return <div className="shipment-preview"><div className="preview-top"><span className="preview-logo"><b>PSS</b> LOGISTICS</span><span className="preview-menu">OVERVIEW &nbsp; TRACKING &nbsp; BILLING</span><span className="preview-dot" /></div><div className="preview-body"><div className="preview-copy"><span className="orange-kicker">LIVE MOVEMENT / 312200621</span><h2>Every handoff,<br /><em>in view.</em></h2><p>Shipment operations, status history, and next actions in one workspace.</p><div className="mini-route"><span>DEL</span><i /><span>BLR</span><i /><span>SIN</span></div></div><div className="route-map"><div className="map-grid" /><svg viewBox="0 0 430 230" fill="none"><path d="M22 198C102 164 93 50 190 82C276 111 259 197 405 30" stroke="#ff6b24" strokeWidth="2" strokeDasharray="5 7" /><circle cx="22" cy="198" r="6" fill="#ff6b24" /><circle cx="190" cy="82" r="6" fill="#d8ef75" /><circle cx="405" cy="30" r="6" fill="#ff6b24" /></svg><span className="map-origin">DELHI</span><span className="map-current">BENGALURU</span><span className="map-destination">SINGAPORE</span></div></div><div className="preview-bottom"><span>EST. DELIVERY <b>24 AUG 2026</b></span><span>STATUS <b className="lime-text">ON ROUTE</b></span><span>78% <b>COMPLETE</b></span></div></div>; }
 
 export default function Home() {
-  return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
-        />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
-    </div>
-  );
+  const [hasScrolled, setHasScrolled] = useState(false);
+  useEffect(() => {
+    const updateScrollState = () => setHasScrolled(window.scrollY > 24);
+    updateScrollState();
+    window.addEventListener("scroll", updateScrollState, { passive: true });
+    return () => window.removeEventListener("scroll", updateScrollState);
+  }, []);
+  return <main><header className={`site-header${hasScrolled ? " is-scrolled" : ""}`}><a className="wordmark" href="#top"><Image src="/brand/pss-logo.png" alt="PSS Logistics — Direct to every direction" width={184} height={92} priority /></a><nav><a href="#services">Services</a><a href="#platform">Solutions</a><a href="#track">Track shipment</a><a href="#about">About</a></nav><div className="header-actions"><a href="https://client.psslogistics.in/sign-in">Sign in</a><a className="orange-button" href="https://client.psslogistics.in/sign-up">Start shipping <Arrow /></a></div></header>
+    <section className="hero" id="top"><div className="hero-media"><div className="media-overlay" /><div className="hero-scanlines" /><div className="media-label">PSS / FREIGHT IN MOTION / 01</div><div className="media-caption"><span>DIRECT TO</span><strong>EVERY<br />DIRECTION</strong></div><div className="media-coordinates">28° 38′ N &nbsp; 77° 13′ E</div></div><div className="hero-content"><span className="orange-kicker">PSS LOGISTICS / MOVEMENT, MADE VISIBLE</span><h1>Move with<br /><em>direction.</em></h1><p>From first booking to final delivery, keep every shipment moving with clarity, control, and confidence.</p><div className="hero-buttons"><a className="orange-button" href="#start">Start shipping <Arrow /></a><a className="line-link" href="#platform">Explore solutions <Arrow /></a></div><div className="hero-tracker"><TrackingCommand /></div><div className="hero-meta"><span>01 — 04</span><span>COMMERCIAL / COURIER / GLOBAL</span><span>SCROLL TO DISCOVER ↓</span></div></div><div className="hero-ship-mark">✦</div></section>
+    <div className="ticker"><div>BOOK <b>✦</b> MOVE <b>✦</b> TRACK <b>✦</b> RESOLVE <b>✦</b> RECONCILE <b>✦</b> BOOK <b>✦</b> MOVE <b>✦</b> TRACK <b>✦</b></div></div>
+    <section className="manifest section-shell" id="about"><div className="manifest-intro"><span className="section-number">02 / THE MANIFEST</span><h2>Logistics is not<br /><em>just a destination.</em></h2></div><div className="manifest-copy"><p>It is every decision, handoff, and mile between here and there. PSS Logistics brings the entire movement into focus.</p><a className="line-link" href="#platform">Our approach <Arrow /></a></div></section>
+    <section className="platform section-shell" id="platform"><div className="section-topline"><span className="section-number">03 / THE CONTROL ROOM</span><span>BUILT AROUND YOUR OPERATIONS</span></div><div className="preview-wrap"><ShipmentPreview /><div className="preview-side"><span className="orange-kicker">ONE WORKSPACE</span><h2>Control<br /><em>the move.</em></h2><p>Booking, tracking, pickup, RTO, billing, reports, and support—connected around the shipment.</p><div className="capability-list">{capabilities.map((item, index) => <div key={item}><span>0{index + 1}</span><strong>{item}</strong><Arrow /></div>)}</div></div></div></section>
+    <section className="services" id="services"><div className="section-shell"><div className="section-topline"><span className="section-number">04 / THE NETWORK</span><span>ONE STANDARD, EVERY MODE</span></div><div className="services-heading"><h2>Every route<br /><em>has a rhythm.</em></h2><p>Commercial and courier logistics for the moments that cannot wait.</p></div><div className="service-list">{services.map(([number, title, text]) => <a className="service-row" href="#start" key={title}><span>{number}</span><h3>{title}</h3><p>{text}</p><Arrow /></a>)}</div></div></section>
+    <section className="tracking-proof section-shell"><div className="proof-head"><span className="orange-kicker">WHEN THE SHIPMENT MOVES</span><h2>Know the story<br /><em>behind the status.</em></h2></div><div className="proof-board"><div className="proof-board-top"><span>PSS AWB</span><strong>312200621</strong><b>IN TRANSIT</b></div><div className="proof-details"><div><small>CLIENT ORDER ID</small><strong>ORD-2026-0814</strong></div><div><small>ORDER DATE</small><strong>14 AUG 2026</strong></div><div><small>EST. DELIVERY</small><strong>24 AUG 2026</strong></div></div><div className="history"><div className="history-line" /><div><i className="done" /><span>Picked up</span><small>Delhi · 14 Aug</small></div><div><i className="done" /><span>In transit</span><small>Bengaluru · 18 Aug</small></div><div><i /><span>Out for delivery</span><small>Singapore · Pending</small></div></div><p className="demo-note">Illustrative frontend preview · production tracking data will connect here.</p></div></section>
+    <section className="rhythm"><div className="section-shell rhythm-inner"><span className="section-number">05 / THE RHYTHM</span><h2>Book. Move. Track.<br /><em>Keep going.</em></h2><div className="rhythm-steps">{[["01", "Book", "Start with the right details."], ["02", "Move", "Coordinate every handoff."], ["03", "Track", "See what is happening now."], ["04", "Resolve", "Act before exceptions grow."], ["05", "Reconcile", "Close the loop clearly."]].map(([number, title, text]) => <div key={number}><span>{number}</span><h3>{title}</h3><p>{text}</p></div>)}</div></div></section>
+    <section className="final-cta section-shell" id="start"><div className="cta-image"><div className="cta-image-text">PSS<br /><span>LOGISTICS</span></div></div><div className="cta-copy"><span className="orange-kicker">DIRECT TO EVERY DIRECTION</span><h2>Ready to<br /><em>move?</em></h2><p>Build a clearer way to run your shipments.</p><a className="orange-button" href="https://client.psslogistics.in/sign-up">Start shipping <Arrow /></a><a className="line-link" href="https://client.psslogistics.in/sign-in">Track a shipment <Arrow /></a></div></section>
+    <footer className="site-footer section-shell"><a className="footer-brand" href="#top"><Image src="/brand/pss-logo.png" alt="PSS Logistics" width={154} height={77} /></a><span>Operational clarity for every shipment.</span><div><a href="#services">Services</a><a href="#track">Track</a><a href="mailto:hello@psslogistics.in">Contact</a><a href="#top">Back to top ↑</a></div></footer></main>;
 }
