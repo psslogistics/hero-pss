@@ -9,6 +9,7 @@
 - Public tracking calls the Worker public tracking boundary.
 - Tracking UI handles missing reference, unknown reference, delayed, delivered, and unavailable states.
 - No private client fields or documents are exposed by the public tracking contract.
+- Public `/privacy` and `/terms` pages are linked from the Hero footer, have canonical metadata, and are included in the public sitemap.
 - Deployed preview smoke rendered successfully with no captured console errors or warnings.
 
 ## Open release gates
@@ -21,4 +22,3 @@
 
 - Shared project evidence: `../PRODUCTION_HANDOVER.md`.
 - API contract: `../docs/pss-api.openapi.yaml`.
-
