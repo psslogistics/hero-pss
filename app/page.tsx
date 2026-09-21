@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 
 type TrackingMode = "pssAwb" | "partnerAwb";
 type TrackingSubmission = "idle" | "loading" | "success" | "invalid" | "notFound" | "unavailable";
@@ -34,6 +34,8 @@ function trackingLabel(result: PublicTrackingResult | null) {
 function TrackingCommand() {
   const [form, setForm] = useState<TrackingFormModel>({ mode: "pssAwb", reference: "", submission: "idle" });
   const [result, setResult] = useState<PublicTrackingResult | null>(null);
+  const requestRef = useRef<{ id: number; controller?: AbortController }>({ id: 0 });
+  useEffect(() => () => requestRef.current.controller?.abort(), []);
   const setMode = (mode: TrackingMode) => setForm((current) => ({ ...current, mode, submission: "idle" }));
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -42,10 +44,14 @@ function TrackingCommand() {
     setForm((current) => ({ ...current, submission: "loading" }));
     const apiUrl = process.env.NEXT_PUBLIC_PSS_API_URL?.replace(/\/$/, "");
     if (!apiUrl) { setResult(null); setForm((current) => ({ ...current, submission: "unavailable" })); return; }
-    void fetch(`${apiUrl}/public/track?reference=${encodeURIComponent(reference)}`)
+    requestRef.current.controller?.abort();
+    const requestId = ++requestRef.current.id;
+    const controller = new AbortController();
+    requestRef.current.controller = controller;
+    void fetch(`${apiUrl}/public/track?reference=${encodeURIComponent(reference)}`, { signal: controller.signal })
       .then(async (response) => { if (!response.ok) throw new Error(`Tracking request failed with status ${response.status}`); return response.json() as Promise<{ data?: PublicTrackingResult | null }>; })
-      .then((payload) => { setResult(payload.data ?? null); setForm((current) => ({ ...current, submission: payload.data ? "success" : "notFound" })); })
-      .catch(() => { setResult(null); setForm((current) => ({ ...current, submission: "unavailable" })); });
+      .then((payload) => { if (controller.signal.aborted || requestId !== requestRef.current.id) return; setResult(payload.data ?? null); setForm((current) => ({ ...current, submission: payload.data ? "success" : "notFound" })); })
+      .catch(() => { if (controller.signal.aborted || requestId !== requestRef.current.id) return; setResult(null); setForm((current) => ({ ...current, submission: "unavailable" })); });
   };
   return <div className="tracking-command" id="track">
     <div className="command-heading"><div><span className="orange-kicker">SHIPMENT VISIBILITY</span><h2>Where is it now?</h2></div><span className="portal-status"><i /> PSS PORTAL</span></div>
