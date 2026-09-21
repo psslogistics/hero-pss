@@ -20,6 +20,17 @@ const capabilities = ["Booking", "Tracking", "Pickup", "RTO / NDR", "Wallet & bi
 
 function Arrow() { return <span aria-hidden="true">↗</span>; }
 
+function trackingLabel(result: PublicTrackingResult | null) {
+  const status = String(result?.status ?? "").toLowerCase();
+  if (status === "delivered") return "Delivered";
+  if (status === "out_for_delivery") return "Out for delivery";
+  if (status === "delayed" || status === "exception") return "Delayed / exception";
+  if (status === "rto") return "Return in progress";
+  if (status === "booked" && !result?.events?.length) return "Provider update pending";
+  if (status) return status.replaceAll("_", " ");
+  return "Shipment located";
+}
+
 function TrackingCommand() {
   const [form, setForm] = useState<TrackingFormModel>({ mode: "pssAwb", reference: "", submission: "idle" });
   const [result, setResult] = useState<PublicTrackingResult | null>(null);
@@ -40,9 +51,10 @@ function TrackingCommand() {
     <div className="command-heading"><div><span className="orange-kicker">SHIPMENT VISIBILITY</span><h2>Where is it now?</h2></div><span className="portal-status"><i /> PSS PORTAL</span></div>
     <div className="mode-tabs" role="tablist" aria-label="Tracking reference type">{(["pssAwb", "partnerAwb"] as TrackingMode[]).map((mode) => <button key={mode} type="button" role="tab" aria-selected={form.mode === mode} className={form.mode === mode ? "active" : ""} onClick={() => setMode(mode)}>{mode === "pssAwb" ? "PSS Logistics AWB" : "Partner AWB"}</button>)}</div>
     <form onSubmit={submit}><label htmlFor="tracking-reference">Enter your {form.mode === "pssAwb" ? "PSS AWB" : "partner reference No."}</label><div className="command-input"><input id="tracking-reference" value={form.reference} onChange={(event) => setForm((current) => ({ ...current, reference: event.target.value, submission: "idle" }))} placeholder="Enter AWB or partner reference No." autoComplete="off" /><button type="submit" disabled={form.submission === "loading"}>{form.submission === "loading" ? "Checking…" : "Track"} <Arrow /></button></div></form>
-    {form.submission === "invalid" && <p className="form-error">Enter a reference number to start tracking.</p>}
-    {form.submission === "notFound" && <p className="form-error">We could not find that reference. Check the number and try again.</p>}
-    {form.submission === "success" && <div className="demo-result"><span>LIVE RESULT · CURRENT STATUS</span><strong>{String(result?.status ?? "Shipment located").replaceAll("_", " ")} <b>·</b> Production tracking</strong><small>{result?.events?.at(-1)?.location ? `Latest location: ${result.events.at(-1)?.location}. ` : ""}Sign in to view the complete event history and shipment details.</small></div>}
+    {form.submission === "invalid" && <p className="form-error" role="status">Enter a reference number to start tracking.</p>}
+    {form.submission === "notFound" && <p className="form-error" role="status">We could not find that reference. Check the number and try again.</p>}
+    {form.submission === "unavailable" && <p className="form-error" role="status">Live tracking is temporarily unavailable. Please try again shortly.</p>}
+    {form.submission === "success" && <div className="demo-result" role="status" aria-live="polite"><span>LIVE RESULT · CURRENT STATUS</span><strong>{trackingLabel(result)} <b>·</b> Production tracking</strong><small>{result?.delivered_at ? `Delivered ${new Date(result.delivered_at).toLocaleDateString()}. ` : result?.edd ? `Expected delivery: ${new Date(result.edd).toLocaleDateString()}. ` : ""}{result?.events?.at(-1)?.location ? `Latest location: ${result.events.at(-1)?.location}. ` : "Provider event details are pending."}Sign in to view the complete event history and shipment details.</small></div>}
     <a className="full-track" href="https://client.psslogistics.in/dashboard/shipmentTracking">View full tracking details <Arrow /></a>
   </div>;
 }

@@ -1,0 +1,9 @@
+/* Keep the first viewport self-contained: the original hero stylesheet contains
+   a legacy remote image fallback, but this winning declaration prevents it from
+   becoming a critical network dependency. */
+.hero-media {
+  background:
+    radial-gradient(circle at 78% 34%, #ff6b2426 0%, transparent 28%),
+    linear-gradient(105deg, #080a0a 0%, #111616 48%, #242016 100%),
+    linear-gradient(0deg, #080a0a 0%, transparent 54%) !important;
+}
