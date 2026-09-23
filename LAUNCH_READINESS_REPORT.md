@@ -3,6 +3,11 @@
 **Assessment date:** 20 September 2026  
 **Status:** Controlled pilot candidate — not production-ready yet
 
+## Current revalidation — 23 September 2026
+
+- The live in-app-browser Hero pass rendered successfully; an unknown reference returned the scoped not-found state without reflecting input or creating data.
+- The remaining Hero-specific gates are approved real-shipment tracking acceptance, final business/legal approval of public content, and production-domain/DNS ownership tasks. Core Web Vitals remain unmeasured under the in-app-browser-only constraint.
+
 ## Verified
 
 - Production build passes with the public Hero routes, `robots.txt`, and `sitemap.xml`.
