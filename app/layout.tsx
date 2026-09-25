@@ -11,6 +11,7 @@ export const metadata: Metadata = {
   alternates: { canonical: "/" },
   openGraph: { title: "PSS Logistics | Direct to every direction", description: "Commercial freight, courier shipping, pickup, tracking, billing, and shipment support.", url: "https://psslogistics.in", siteName: "PSS Logistics", type: "website", images: [{ url: "/brand/pss-logo.png", alt: "PSS Logistics" }] },
   twitter: { card: "summary", title: "PSS Logistics | Direct to every direction", description: "Commercial freight and courier logistics with every movement in view." },
+  icons: { icon: "/brand/pss-mark.png" },
   robots: { index: true, follow: true },
 };
 
