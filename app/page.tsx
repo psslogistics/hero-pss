@@ -47,11 +47,13 @@ function TrackingCommand() {
     requestRef.current.controller?.abort();
     const requestId = ++requestRef.current.id;
     const controller = new AbortController();
+    const timeout = window.setTimeout(() => controller.abort(), 8000);
     requestRef.current.controller = controller;
     void fetch(`${apiUrl}/public/track?reference=${encodeURIComponent(reference)}`, { signal: controller.signal })
       .then(async (response) => { if (!response.ok) throw new Error(`Tracking request failed with status ${response.status}`); return response.json() as Promise<{ data?: PublicTrackingResult | null }>; })
       .then((payload) => { if (controller.signal.aborted || requestId !== requestRef.current.id) return; setResult(payload.data ?? null); setForm((current) => ({ ...current, submission: payload.data ? "success" : "notFound" })); })
-      .catch(() => { if (controller.signal.aborted || requestId !== requestRef.current.id) return; setResult(null); setForm((current) => ({ ...current, submission: "unavailable" })); });
+      .catch(() => { if (requestId !== requestRef.current.id) return; setResult(null); setForm((current) => ({ ...current, submission: "unavailable" })); })
+      .finally(() => window.clearTimeout(timeout));
   };
   return <div className="tracking-command" id="track">
     <div className="command-heading"><div><span className="orange-kicker">SHIPMENT VISIBILITY</span><h2>Where is it now?</h2></div><span className="portal-status"><i /> PSS PORTAL</span></div>
