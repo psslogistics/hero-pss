@@ -7,6 +7,7 @@ type TrackingMode = "pssAwb" | "partnerAwb";
 type TrackingSubmission = "idle" | "loading" | "success" | "invalid" | "notFound" | "unavailable";
 type TrackingFormModel = { mode: TrackingMode; reference: string; submission: TrackingSubmission };
 type PublicTrackingResult = { provider?: string; status?: string; edd?: string | null; delivered_at?: string | null; updated_at?: string | null; events?: Array<{ status?: string; location?: string; description?: string; event_time?: string }> };
+type PublicTrackingPayload = { data?: PublicTrackingResult | null; status?: "found" | "not_found" | "provider_unavailable" };
 
 const services = [
   ["01", "Air freight", "Time-critical cargo, precisely coordinated."],
@@ -50,8 +51,8 @@ function TrackingCommand() {
     const timeout = window.setTimeout(() => controller.abort(), 8000);
     requestRef.current.controller = controller;
     void fetch(`${apiUrl}/public/track?reference=${encodeURIComponent(reference)}`, { signal: controller.signal })
-      .then(async (response) => { if (!response.ok) throw new Error(`Tracking request failed with status ${response.status}`); return response.json() as Promise<{ data?: PublicTrackingResult | null }>; })
-      .then((payload) => { if (controller.signal.aborted || requestId !== requestRef.current.id) return; setResult(payload.data ?? null); setForm((current) => ({ ...current, submission: payload.data ? "success" : "notFound" })); })
+      .then(async (response) => { if (!response.ok) throw new Error(`Tracking request failed with status ${response.status}`); return response.json() as Promise<PublicTrackingPayload>; })
+      .then((payload) => { if (controller.signal.aborted || requestId !== requestRef.current.id) return; setResult(payload.data ?? null); setForm((current) => ({ ...current, submission: payload.data ? "success" : payload.status === "provider_unavailable" ? "unavailable" : "notFound" })); })
       .catch(() => { if (requestId !== requestRef.current.id) return; setResult(null); setForm((current) => ({ ...current, submission: "unavailable" })); })
       .finally(() => window.clearTimeout(timeout));
   };
