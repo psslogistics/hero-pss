@@ -6,7 +6,7 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 type TrackingMode = "pssAwb" | "partnerAwb";
 type TrackingSubmission = "idle" | "loading" | "success" | "invalid" | "notFound" | "unavailable";
 type TrackingFormModel = { mode: TrackingMode; reference: string; submission: TrackingSubmission };
-type PublicTrackingResult = { status?: string; edd?: string | null; delivered_at?: string | null; updated_at?: string | null; events?: Array<{ status?: string; location?: string; description?: string; event_time?: string }> };
+type PublicTrackingResult = { provider?: string; status?: string; edd?: string | null; delivered_at?: string | null; updated_at?: string | null; events?: Array<{ status?: string; location?: string; description?: string; event_time?: string }> };
 
 const services = [
   ["01", "Air freight", "Time-critical cargo, precisely coordinated."],
@@ -62,7 +62,7 @@ function TrackingCommand() {
     {form.submission === "invalid" && <p className="form-error" role="status">Enter a reference number to start tracking.</p>}
     {form.submission === "notFound" && <p className="form-error" role="status">We could not find that reference. Check the number and try again.</p>}
     {form.submission === "unavailable" && <p className="form-error" role="status">Live tracking is temporarily unavailable. Please try again shortly.</p>}
-    {form.submission === "success" && <div className="demo-result" role="status" aria-live="polite"><span>LIVE RESULT · CURRENT STATUS</span><strong>{trackingLabel(result)} <b>·</b> Production tracking</strong><small>{result?.delivered_at ? `Delivered ${new Date(result.delivered_at).toLocaleDateString()}. ` : result?.edd ? `Expected delivery: ${new Date(result.edd).toLocaleDateString()}. ` : ""}{result?.events?.at(-1)?.location ? `Latest location: ${result.events.at(-1)?.location}. ` : "Provider event details are pending."}Sign in to view the complete event history and shipment details.</small></div>}
+    {form.submission === "success" && <div className="demo-result" role="status" aria-live="polite"><span>LIVE RESULT · CURRENT STATUS</span><strong>{trackingLabel(result)} <b>·</b> {result?.provider ? `${result.provider} tracking` : "PSS tracking"}</strong><small>{result?.delivered_at ? `Delivered ${new Date(result.delivered_at).toLocaleDateString()}. ` : result?.edd ? `Expected delivery: ${new Date(result.edd).toLocaleDateString()}. ` : ""}{result?.events?.at(-1)?.location ? `Latest location: ${result.events.at(-1)?.location}. ` : "Provider event details are pending."}Sign in to view the complete event history and shipment details.</small></div>}
     <a className="full-track" href="https://client.psslogistics.in/dashboard/shipmentTracking">View full tracking details <Arrow /></a>
   </div>;
 }
