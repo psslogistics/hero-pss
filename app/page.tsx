@@ -8,6 +8,14 @@ type TrackingSubmission = "idle" | "loading" | "success" | "invalid" | "notFound
 type TrackingFormModel = { mode: TrackingMode; reference: string; submission: TrackingSubmission };
 type PublicTrackingResult = { provider?: string; status?: string; edd?: string | null; delivered_at?: string | null; updated_at?: string | null; events?: Array<{ status?: string; location?: string; description?: string; event_time?: string }> };
 type PublicTrackingPayload = { data?: PublicTrackingResult | null; status?: "found" | "not_found" | "provider_unavailable" };
+type TrackingCacheEntry = { payload: PublicTrackingPayload; expiresAt: number };
+
+// Public lookups are safe to cache briefly: they contain only the restricted
+// tracking projection, never private shipment fields. This also prevents a
+// repeated click or remount from starting another provider lookup.
+const trackingCache = new Map<string, TrackingCacheEntry>();
+const trackingInFlight = new Map<string, Promise<PublicTrackingPayload>>();
+const TRACKING_CACHE_TTL_MS = 15_000;
 
 const services = [
   ["01", "Air freight", "Time-critical cargo, precisely coordinated."],
@@ -50,8 +58,16 @@ function TrackingCommand() {
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 8000);
     requestRef.current.controller = controller;
-    void fetch(`${apiUrl}/public/track?reference=${encodeURIComponent(reference)}`, { signal: controller.signal })
-      .then(async (response) => { if (!response.ok) throw new Error(`Tracking request failed with status ${response.status}`); return response.json() as Promise<PublicTrackingPayload>; })
+    const cacheKey = reference.toUpperCase();
+    const cached = trackingCache.get(cacheKey);
+    const request = cached && cached.expiresAt > Date.now()
+      ? Promise.resolve(cached.payload)
+      : trackingInFlight.get(cacheKey) ?? fetch(`${apiUrl}/public/track?reference=${encodeURIComponent(reference)}`, { signal: controller.signal })
+        .then(async (response) => { if (!response.ok) throw new Error(`Tracking request failed with status ${response.status}`); return response.json() as Promise<PublicTrackingPayload>; })
+        .then((payload) => { trackingCache.set(cacheKey, { payload, expiresAt: Date.now() + TRACKING_CACHE_TTL_MS }); return payload; })
+        .finally(() => trackingInFlight.delete(cacheKey));
+    if (!cached || cached.expiresAt <= Date.now()) trackingInFlight.set(cacheKey, request);
+    void request
       .then((payload) => { if (controller.signal.aborted || requestId !== requestRef.current.id) return; setResult(payload.data ?? null); setForm((current) => ({ ...current, submission: payload.data ? "success" : payload.status === "provider_unavailable" ? "unavailable" : "notFound" })); })
       .catch(() => { if (requestId !== requestRef.current.id) return; setResult(null); setForm((current) => ({ ...current, submission: "unavailable" })); })
       .finally(() => window.clearTimeout(timeout));
