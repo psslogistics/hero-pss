@@ -26,6 +26,10 @@ export default function RootLayout({ children }: Readonly<{ children: ReactNode 
       lang="en"
       className="h-full antialiased"
     >
+      <head>
+        <link rel="preconnect" href="https://pss-api.psslogisticsadmin.workers.dev" crossOrigin="anonymous" />
+        <link rel="dns-prefetch" href="//pss-api.psslogisticsadmin.workers.dev" />
+      </head>
       <body className="min-h-full flex flex-col">{children}</body>
     </html>
   );
