@@ -5,46 +5,33 @@ import { FormEvent, useEffect, useRef, useState } from "react";
 
 type TrackingMode = "pssAwb" | "partnerAwb";
 type TrackingSubmission = "idle" | "loading" | "success" | "invalid" | "notFound" | "unavailable";
-type TrackingFormModel = { mode: TrackingMode; reference: string; submission: TrackingSubmission };
 type PublicTrackingResult = { provider?: string; status?: string; edd?: string | null; delivered_at?: string | null; updated_at?: string | null; events?: Array<{ status?: string; location?: string; description?: string; event_time?: string }> };
 type PublicTrackingPayload = { data?: PublicTrackingResult | null; status?: "found" | "not_found" | "provider_unavailable" };
-type TrackingCacheEntry = { payload: PublicTrackingPayload; expiresAt: number };
 
-// Public lookups are safe to cache briefly: they contain only the restricted
-// tracking projection, never private shipment fields. This also prevents a
-// repeated click or remount from starting another provider lookup.
-const trackingCache = new Map<string, TrackingCacheEntry>();
+const trackingCache = new Map<string, { payload: PublicTrackingPayload; expiresAt: number }>();
 const trackingInFlight = new Map<string, Promise<PublicTrackingPayload>>();
 const TRACKING_CACHE_TTL_MS = 15_000;
 
+const lifecycle = [
+  ["01", "Booked", "The right details start the move."],
+  ["02", "Manifested", "A provider reference makes the handoff real."],
+  ["03", "In transit", "Milestones and ETA stay connected."],
+  ["04", "Resolved", "Exceptions become the next action."],
+] as const;
+
 const services = [
-  ["01", "Air freight", "Time-critical cargo, precisely coordinated."],
-  ["02", "Surface freight", "Reliable road movement, mile after mile."],
-  ["03", "Train freight", "Flexible capacity for every kind of load."],
-  ["04", "International", "Cross-border logistics without the friction."],
-  ["05", "ATA freight", "Airport-to-airport, with every detail in view."],
-];
-
-const capabilities = ["Booking", "Tracking", "Pickup", "RTO / NDR", "Wallet & billing", "Reports & support"];
-
-const proofPoints = [
-  ["LR / AWB", "Visibility that follows the shipment."],
-  ["WEIGHT", "Reconcile the booked and provider reality."],
-  ["EXCEPTIONS", "See the problem. Act before it grows."],
-  ["MARGIN", "Keep the commercial picture in view."],
-];
-
-const audiences = [
-  ["01", "Manufacturers", "Move replenishment, parts, and freight with a clearer operational trail."],
-  ["02", "Distributors", "Coordinate every handoff across branches, customers, and courier partners."],
-  ["03", "Growing brands", "Give every booking, label, update, and exception one dependable home."],
-];
+  ["01", "Book", "Create a shipment without losing the detail."],
+  ["02", "Move", "Coordinate the handoffs that keep freight moving."],
+  ["03", "Track", "Find the LR, the ETA, and the next signal."],
+  ["04", "Resolve", "Turn an exception into a decision."],
+  ["05", "Reconcile", "Close the operational and commercial loop."],
+] as const;
 
 const panelSnapshots = [
-  { image: "/panel-previews/booking.png", eyebrow: "BOOK FROM ONE WORKSPACE", title: "Booking, with the details in place.", text: "Consignor, consignee, documentation, shipment details, and service review in one flow.", alt: "PSS Logistics booking panel showing shipment details and documentation fields" },
-  { image: "/panel-previews/tracking.png", eyebrow: "TRACK EVERY LR AND AWB", title: "A clearer view after the handoff.", text: "See LR, AWB, provider booking, shipment state, and the next operational action together.", alt: "PSS Logistics tracking panel showing LR, AWB, shipment status, and ready-to-ship details" },
-  { image: "/panel-previews/operations.png", eyebrow: "CONTROL THE MOVE", title: "Operations that stay visible.", text: "Monitor active shipments, alerts, KPIs, and the actions that keep freight moving.", alt: "PSS Logistics operations dashboard showing shipment KPIs and alerts" },
-];
+  { image: "/panel-previews/booking.png", label: "BOOKING", title: "Start with the details that matter.", alt: "PSS Logistics booking panel showing shipment details and documentation fields" },
+  { image: "/panel-previews/tracking.png", label: "TRACKING", title: "See the shipment after the handoff.", alt: "PSS Logistics tracking panel showing LR, AWB, shipment status, and ready-to-ship details" },
+  { image: "/panel-previews/operations.png", label: "OPERATIONS", title: "Keep the whole network in view.", alt: "PSS Logistics operations dashboard showing shipment KPIs and alerts" },
+] as const;
 
 function Arrow() { return <span aria-hidden="true">↗</span>; }
 
@@ -55,84 +42,103 @@ function trackingLabel(result: PublicTrackingResult | null) {
   if (status === "delayed" || status === "exception") return "Delayed / exception";
   if (status === "rto") return "Return in progress";
   if (status === "booked" && !result?.events?.length) return "Provider update pending";
-  if (status) return status.replaceAll("_", " ");
-  return "Shipment located";
+  return status ? status.replaceAll("_", " ") : "Shipment located";
 }
 
 function TrackingCommand() {
-  const [form, setForm] = useState<TrackingFormModel>({ mode: "pssAwb", reference: "", submission: "idle" });
+  const [mode, setMode] = useState<TrackingMode>("pssAwb");
+  const [reference, setReference] = useState("");
+  const [submission, setSubmission] = useState<TrackingSubmission>("idle");
   const [result, setResult] = useState<PublicTrackingResult | null>(null);
   const requestRef = useRef<{ id: number; controller?: AbortController }>({ id: 0 });
   useEffect(() => () => requestRef.current.controller?.abort(), []);
-  const setMode = (mode: TrackingMode) => setForm((current) => ({ ...current, mode, submission: "idle" }));
+
   const submit = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const reference = form.reference.trim();
-    if (!reference) { setResult(null); setForm((current) => ({ ...current, submission: "invalid" })); return; }
-    setForm((current) => ({ ...current, submission: "loading" }));
+    const trimmed = reference.trim();
+    if (!trimmed) { setResult(null); setSubmission("invalid"); return; }
     const apiUrl = process.env.NEXT_PUBLIC_PSS_API_URL?.replace(/\/$/, "");
-    if (!apiUrl) { setResult(null); setForm((current) => ({ ...current, submission: "unavailable" })); return; }
+    if (!apiUrl) { setResult(null); setSubmission("unavailable"); return; }
     requestRef.current.controller?.abort();
     const requestId = ++requestRef.current.id;
     const controller = new AbortController();
     const timeout = window.setTimeout(() => controller.abort(), 8000);
     requestRef.current.controller = controller;
-    const cacheKey = reference.toUpperCase();
-    const cached = trackingCache.get(cacheKey);
+    const key = trimmed.toUpperCase();
+    const cached = trackingCache.get(key);
     const request = cached && cached.expiresAt > Date.now()
       ? Promise.resolve(cached.payload)
-      : trackingInFlight.get(cacheKey) ?? fetch(`${apiUrl}/public/track?reference=${encodeURIComponent(reference)}`, { signal: controller.signal })
+      : trackingInFlight.get(key) ?? fetch(`${apiUrl}/public/track?reference=${encodeURIComponent(trimmed)}`, { signal: controller.signal })
         .then(async (response) => { if (!response.ok) throw new Error(`Tracking request failed with status ${response.status}`); return response.json() as Promise<PublicTrackingPayload>; })
-        .then((payload) => { trackingCache.set(cacheKey, { payload, expiresAt: Date.now() + TRACKING_CACHE_TTL_MS }); return payload; })
-        .finally(() => trackingInFlight.delete(cacheKey));
-    if (!cached || cached.expiresAt <= Date.now()) trackingInFlight.set(cacheKey, request);
-    void request
-      .then((payload) => { if (controller.signal.aborted || requestId !== requestRef.current.id) return; setResult(payload.data ?? null); setForm((current) => ({ ...current, submission: payload.data ? "success" : payload.status === "provider_unavailable" ? "unavailable" : "notFound" })); })
-      .catch(() => { if (requestId !== requestRef.current.id) return; setResult(null); setForm((current) => ({ ...current, submission: "unavailable" })); })
-      .finally(() => window.clearTimeout(timeout));
+        .then((payload) => { trackingCache.set(key, { payload, expiresAt: Date.now() + TRACKING_CACHE_TTL_MS }); return payload; })
+        .finally(() => trackingInFlight.delete(key));
+    if (!cached || cached.expiresAt <= Date.now()) trackingInFlight.set(key, request);
+    setSubmission("loading");
+    void request.then((payload) => {
+      if (controller.signal.aborted || requestId !== requestRef.current.id) return;
+      setResult(payload.data ?? null);
+      setSubmission(payload.data ? "success" : payload.status === "provider_unavailable" ? "unavailable" : "notFound");
+    }).catch(() => { if (requestId === requestRef.current.id) { setResult(null); setSubmission("unavailable"); } }).finally(() => window.clearTimeout(timeout));
   };
-  return <div className="tracking-command" id="track">
-    <div className="command-heading"><div><span className="orange-kicker">SHIPMENT VISIBILITY</span><h2>Where is it now?</h2></div><span className="portal-status"><i /> PSS PORTAL</span></div>
-    <div className="mode-tabs" role="tablist" aria-label="Tracking reference type">{(["pssAwb", "partnerAwb"] as TrackingMode[]).map((mode) => <button key={mode} type="button" role="tab" aria-selected={form.mode === mode} className={form.mode === mode ? "active" : ""} onClick={() => setMode(mode)}>{mode === "pssAwb" ? "PSS Logistics AWB" : "Partner AWB"}</button>)}</div>
-    <form onSubmit={submit}><label htmlFor="tracking-reference">Enter your {form.mode === "pssAwb" ? "PSS AWB" : "partner reference No."}</label><div className="command-input"><input id="tracking-reference" value={form.reference} onChange={(event) => setForm((current) => ({ ...current, reference: event.target.value, submission: "idle" }))} placeholder="Enter AWB or partner reference No." autoComplete="off" /><button type="submit" disabled={form.submission === "loading"}>{form.submission === "loading" ? "Checking…" : "Track"} <Arrow /></button></div></form>
-    {form.submission === "invalid" && <p className="form-error" role="status">Enter a reference number to start tracking.</p>}
-    {form.submission === "notFound" && <p className="form-error" role="status">We could not find that reference. Check the number and try again.</p>}
-    {form.submission === "unavailable" && <p className="form-error" role="status">Live tracking is temporarily unavailable. Please try again shortly.</p>}
-    {form.submission === "success" && <div className="demo-result" role="status" aria-live="polite"><span>LIVE RESULT · CURRENT STATUS</span><strong>{trackingLabel(result)} <b>·</b> {result?.provider ? `${result.provider} tracking` : "PSS tracking"}</strong><small>{result?.delivered_at ? `Delivered ${new Date(result.delivered_at).toLocaleDateString()}. ` : result?.edd ? `Expected delivery: ${new Date(result.edd).toLocaleDateString()}. ` : ""}{result?.events?.at(-1)?.location ? `Latest location: ${result.events.at(-1)?.location}. ` : "Provider event details are pending."}Sign in to view the complete event history and shipment details.</small></div>}
-    <a className="full-track" href="https://client.psslogistics.in/dashboard/shipmentTracking">View full tracking details <Arrow /></a>
+
+  return <section className="command-dock" id="track" aria-labelledby="track-title">
+    <div className="command-dock-head"><div><span className="overline lime">PUBLIC TRACKING</span><h2 id="track-title">Where is it now?</h2></div><span className="online-mark"><i /> PSS PORTAL</span></div>
+    <div className="command-tabs" role="tablist" aria-label="Tracking reference type">
+      <button type="button" role="tab" aria-selected={mode === "pssAwb"} className={mode === "pssAwb" ? "is-active" : ""} onClick={() => { setMode("pssAwb"); setSubmission("idle"); }}>PSS Logistics AWB</button>
+      <button type="button" role="tab" aria-selected={mode === "partnerAwb"} className={mode === "partnerAwb" ? "is-active" : ""} onClick={() => { setMode("partnerAwb"); setSubmission("idle"); }}>Partner reference</button>
+    </div>
+    <form onSubmit={submit}><label htmlFor="tracking-reference">Enter {mode === "pssAwb" ? "your PSS AWB" : "a partner reference"}</label><div className="command-field"><input id="tracking-reference" value={reference} onChange={(event) => { setReference(event.target.value); setSubmission("idle"); }} placeholder="AWB / LR / reference number" autoComplete="off" /><button type="submit" disabled={submission === "loading"}>{submission === "loading" ? "Checking…" : "Track"} <Arrow /></button></div></form>
+    {submission === "invalid" && <p className="command-error" role="status">Enter a reference number to start tracking.</p>}
+    {submission === "notFound" && <p className="command-error" role="status">We could not find that reference. Check the number and try again.</p>}
+    {submission === "unavailable" && <p className="command-error" role="status">Live tracking is temporarily unavailable. Please try again shortly.</p>}
+    {submission === "success" && <div className="command-result" role="status" aria-live="polite"><span>LIVE RESULT · CURRENT STATUS</span><strong>{trackingLabel(result)} <b>·</b> {result?.provider ? `${result.provider} tracking` : "PSS tracking"}</strong><small>{result?.edd ? `Expected delivery: ${new Date(result.edd).toLocaleDateString()}. ` : ""}{result?.events?.at(-1)?.location ? `Latest location: ${result.events.at(-1)?.location}.` : "Provider event details are pending."}</small></div>}
+    <a className="text-link" href="https://client.psslogistics.in/dashboard/shipmentTracking">View full tracking details <Arrow /></a>
+  </section>;
+}
+
+function RouteField() {
+  return <div className="route-field" aria-label="Illustrated shipment route from origin to destination">
+    <div className="route-field-grid" />
+    <svg viewBox="0 0 740 520" role="img" aria-label="A live route line crossing a logistics network">
+      <defs><linearGradient id="route-glow" x1="0" x2="1"><stop stopColor="#ff6b24" /><stop offset="1" stopColor="#d8ef75" /></linearGradient><filter id="soft-glow"><feGaussianBlur stdDeviation="8" result="blur" /><feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge></filter></defs>
+      <path className="route-ghost" d="M38 424 C176 390 180 205 315 256 S470 435 696 90" />
+      <path className="route-line" d="M38 424 C176 390 180 205 315 256 S470 435 696 90" />
+      <g className="route-node origin"><circle cx="38" cy="424" r="11" /><circle cx="38" cy="424" r="24" /></g>
+      <g className="route-node current"><circle cx="315" cy="256" r="9" /><circle cx="315" cy="256" r="22" /></g>
+      <g className="route-node destination"><circle cx="696" cy="90" r="11" /><circle cx="696" cy="90" r="24" /></g>
+      <path className="route-dash" d="M40 424 C176 390 180 205 315 256 S470 435 696 90" />
+    </svg>
+    <span className="route-label route-origin"><b>01</b> ORIGIN / DELHI</span><span className="route-label route-current"><b>LIVE</b> HANDOFF / 28.61°N</span><span className="route-label route-destination"><b>04</b> DESTINATION / INDIA</span>
+    <div className="route-card"><span>SHIPMENT SIGNAL</span><strong>Every mile leaves a trace.</strong><small>LR / AWB · ETA · EXCEPTION</small></div>
   </div>;
 }
 
-function ShipmentPreview() { return <div className="shipment-preview"><div className="preview-top"><span className="preview-logo"><b>PSS</b> LOGISTICS</span><span className="preview-menu">BOOKING &nbsp; TRACKING &nbsp; OPERATIONS</span><span className="preview-dot" /></div><div className="preview-snapshot"><Image src="/panel-previews/tracking.png" alt="PSS Logistics tracking workspace" width={528} height={666} sizes="(max-width: 900px) 100vw, 55vw" /></div><div className="preview-caption"><span className="orange-kicker">REAL PSS WORKSPACE / TRACKING</span><h2>Every handoff,<br /><em>in view.</em></h2><p>Captured panel views show how PSS keeps shipment operations visible; live details remain inside the authenticated workspace.</p></div><p className="demo-note">Product preview · live shipment data remains inside the authenticated PSS panel.</p></div>; }
+function ProductProof() {
+  const [active, setActive] = useState(0);
+  const snapshot = panelSnapshots[active];
+  return <section className="product-proof" id="platform" aria-labelledby="product-proof-title"><div className="product-proof-top"><div><span className="overline">02 / THE CONTROL ROOM *</span><h2 id="product-proof-title">The product<br /><em>does the talking.</em></h2></div><p>Real PSS workspaces, arranged as a visual proof of the work behind every move.</p></div><div className="product-stage"><div className="product-frame"><div className="frame-bar"><span><i /><i /><i /></span><b>PSS / AUTHENTICATED WORKSPACE</b><em>LIVE DATA INSIDE THE PANEL</em></div><Image key={snapshot.image} src={snapshot.image} alt={snapshot.alt} width={455} height={666} sizes="(max-width: 900px) 92vw, 42vw" /></div><div className="product-stage-copy"><span className="overline lime">{snapshot.label} *</span><h3>{snapshot.title}</h3><p>Booking, tracking, documents, references, and operational action—connected around the shipment instead of scattered across tabs.</p><a className="text-link" href="https://client.psslogistics.in/dashboard">Open the PSS workspace <Arrow /></a><div className="product-switcher" role="tablist" aria-label="PSS workspace previews">{panelSnapshots.map((item, index) => <button key={item.label} type="button" role="tab" aria-selected={active === index} className={active === index ? "is-active" : ""} onClick={() => setActive(index)}><span>0{index + 1}</span>{item.label}</button>)}</div></div></div><p className="creative-note">* Creative presentation: these panel views are composed as marketing proof; live product behaviour and shipment data remain in the authenticated PSS workspaces.</p></section>;
+}
 
-function PanelSnapshotGrid() { return <div className="panel-snapshot-grid">{panelSnapshots.map((snapshot) => <article className="panel-snapshot" key={snapshot.image}><div className="panel-snapshot-image"><div className="snapshot-chrome"><i /><i /><i /><span>PSS / WORKSPACE</span></div><Image src={snapshot.image} alt={snapshot.alt} width={455} height={666} sizes="(max-width: 900px) 100vw, 30vw" /></div><div className="panel-snapshot-copy"><span className="orange-kicker">{snapshot.eyebrow} *</span><h3>{snapshot.title}</h3><p>{snapshot.text}</p></div></article>)}</div>; }
-
-function ShipmentStory() { return <section className="shipment-story section-shell" aria-labelledby="shipment-story-title"><div className="story-copy"><span className="section-number">04 / THE SHIPMENT STORY</span><h2 id="shipment-story-title">One shipment.<br /><em>No blind spots.</em></h2><p>From the first detail entered to the final proof of delivery, PSS keeps the operational and commercial story connected.</p><a className="line-link" href="https://client.psslogistics.in/dashboard/shipmentTracking">See the tracking workspace <Arrow /></a></div><div className="story-visual"><Image src="/hero/manifest-detail.png" alt="Freight box and manifest being checked at a warehouse dispatch table" width={1536} height={1024} sizes="(max-width: 900px) 100vw, 58vw" /><div className="story-stamp"><span>LIVE WORKFLOW</span><strong>BOOK → MOVE → TRACK</strong></div></div><div className="story-steps">{[["01", "Booked", "The right details start the move."], ["02", "Manifested", "The provider reference becomes visible."], ["03", "In transit", "Milestones and ETA stay connected."], ["04", "Resolved", "Exceptions become the next action."]].map(([number, title, text]) => <div key={number}><span>{number}</span><strong>{title}</strong><p>{text}</p></div>)}</div></section>; }
-
-function AudienceGrid() { return <section className="audience section-shell" aria-labelledby="audience-title"><div className="section-topline"><span className="section-number">05 / BUILT FOR THE MOVE</span><span>ONE WORKSPACE, DIFFERENT PRESSURES</span></div><div className="audience-heading"><h2 id="audience-title">The work is<br /><em>different. The clarity is not.</em></h2><p>Whether you are moving stock, serving customers, or closing the books, PSS keeps the shipment at the centre.</p></div><div className="audience-grid">{audiences.map(([number, title, text]) => <a href="#start" className="audience-card" key={title}><span>{number}</span><h3>{title}</h3><p>{text}</p><Arrow /></a>)}</div></section>; }
+function ExceptionTheatre() {
+  const [active, setActive] = useState(2);
+  return <section className="exception-theatre" aria-labelledby="exception-title"><div className="section-shell"><div className="theatre-intro"><span className="overline lime">03 / WHEN THE MOVE CHANGES</span><h2 id="exception-title">The problem is<br /><em>part of the route.</em></h2><p>Visibility is only useful when it changes what happens next. PSS brings the exception forward, with the context to act.</p></div><div className="theatre-layout"><div className="exception-list" role="tablist" aria-label="Shipment exception examples">{[["01", "Weight changed", "Provider weight is higher than the booking."], ["02", "LR pending", "The manifest needs a provider reference."], ["03", "Pickup at risk", "The origin is not ready for collection."]].map(([number, title, text], index) => <button key={number} type="button" role="tab" aria-selected={active === index} className={active === index ? "is-active" : ""} onClick={() => setActive(index)}><span>{number}</span><strong>{title}</strong><small>{text}</small><Arrow /></button>)}</div><div className="exception-card"><span className="overline">PSS ACTION BOARD / 0{active + 1}</span><div className="exception-card-top"><div><small>SHIPMENT</small><strong>3219654906</strong></div><span className="exception-status">NEEDS ACTION</span></div><div className="exception-event"><span>EVENT</span><strong>{active === 0 ? "Weight reconciliation" : active === 1 ? "Manifest response" : "Pickup readiness"}</strong><p>{active === 0 ? "Compare client-entered weight with provider weight before billing." : active === 1 ? "Keep the shipment honest until LR / AWB is returned." : "Resolve the warehouse state before requesting pickup."}</p></div><div className="exception-footer"><span>OWNED BY PSS</span><span>UPDATED JUST NOW</span></div></div></div></div></section>;
+}
 
 export default function Home() {
   const [hasScrolled, setHasScrolled] = useState(false);
-  useEffect(() => {
-    const updateScrollState = () => setHasScrolled(window.scrollY > 24);
-    updateScrollState();
-    window.addEventListener("scroll", updateScrollState, { passive: true });
-    return () => window.removeEventListener("scroll", updateScrollState);
-  }, []);
+  useEffect(() => { const onScroll = () => setHasScrolled(window.scrollY > 30); onScroll(); window.addEventListener("scroll", onScroll, { passive: true }); return () => window.removeEventListener("scroll", onScroll); }, []);
   const organizationSchema = { "@context": "https://schema.org", "@type": "Organization", "@id": "https://psslogistics.in/#organization", name: "PSS Logistics", url: "https://psslogistics.in/", logo: "https://psslogistics.in/brand/pss-logo.png", description: "Business courier, freight, shipment tracking, pickup, and delivery operations from PSS Logistics.", email: "hello@psslogistics.in", areaServed: { "@type": "Country", name: "India" }, knowsAbout: ["Courier shipping", "Freight forwarding", "Shipment tracking", "Pickup management", "RTO and NDR operations"], sameAs: ["https://client.psslogistics.in"] };
   const serviceSchema = { "@context": "https://schema.org", "@type": "Service", name: "PSS Logistics shipping and shipment tracking", provider: { "@id": "https://psslogistics.in/#organization" }, areaServed: { "@type": "Country", name: "India" }, serviceType: ["Freight forwarding", "Courier shipping", "Shipment tracking", "Pickup management"] };
-  const websiteSchema = { "@context": "https://schema.org", "@type": "WebSite", "@id": "https://psslogistics.in/#website", name: "PSS Logistics", url: "https://psslogistics.in/", publisher: { "@id": "https://psslogistics.in/#organization" }, inLanguage: "en-IN" };
-  return <main><script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationSchema) }} /><script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(serviceSchema) }} /><script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(websiteSchema) }} /><header className={`site-header${hasScrolled ? " is-scrolled" : ""}`}><a className="wordmark" href="#top"><Image src="/brand/pss-logo.png" alt="PSS Logistics — Direct to every direction" width={184} height={92} priority /></a><nav aria-label="Primary navigation"><a href="#services">Services</a><a href="#platform">Solutions</a><a href="#track">Track shipment</a><a href="#about">About</a></nav><div className="header-actions"><a href="https://client.psslogistics.in/sign-in">Sign in</a><a className="orange-button" href="https://client.psslogistics.in/sign-up">Start shipping <Arrow /></a></div></header>
-    <section className="hero" id="top"><div className="hero-media"><Image className="hero-photo" src="/hero/freight-handoff.png" alt="Workers handing over a labelled shipment at a freight warehouse" fill priority sizes="100vw" /><div className="media-overlay" /><div className="hero-scanlines" /><div className="media-label">PSS / FREIGHT IN MOTION / 01</div><div className="media-caption"><span>DIRECT TO</span><strong>EVERY<br />DIRECTION</strong></div><div className="media-coordinates">28° 38′ N &nbsp; 77° 13′ E</div></div><div className="hero-content"><span className="orange-kicker">PSS LOGISTICS / MOVEMENT, MADE VISIBLE</span><h1>Move with<br /><em>direction.</em></h1><p>One shipment desk. Every handoff under control—from the first booking to the final delivery.</p><div className="hero-buttons"><a className="orange-button" href="#start">Start shipping <Arrow /></a><a className="line-link" href="#platform">Explore solutions <Arrow /></a></div><div className="hero-proof-rail" aria-label="PSS shipment workflow"><span><b>01</b> BOOK</span><span><b>02</b> MOVE</span><span><b>03</b> TRACK</span><span><b>04</b> RESOLVE</span></div><div className="hero-tracker"><TrackingCommand /></div><div className="hero-meta"><span>01 — 04</span><span>COMMERCIAL / COURIER / GLOBAL</span><span>SCROLL TO DISCOVER ↓</span></div></div><div className="hero-ship-mark">✦</div></section>
-    <div className="ticker"><div>BOOK <b>✦</b> MOVE <b>✦</b> TRACK <b>✦</b> RESOLVE <b>✦</b> RECONCILE <b>✦</b> BOOK <b>✦</b> MOVE <b>✦</b> TRACK <b>✦</b></div></div>
-    <section className="manifest section-shell" id="about"><div className="manifest-intro"><span className="section-number">02 / THE MANIFEST</span><h2>Logistics is not<br /><em>just a destination.</em></h2></div><div className="manifest-copy"><p>It is every decision, handoff, and mile between here and there. PSS Logistics brings the entire movement into focus.</p><a className="line-link" href="#platform">Our approach <Arrow /></a></div></section>
-    <section className="platform section-shell" id="platform"><div className="section-topline"><span className="section-number">03 / THE CONTROL ROOM *</span><span>BUILT AROUND YOUR OPERATIONS</span></div><div className="preview-wrap"><ShipmentPreview /><div className="preview-side"><span className="orange-kicker">ONE WORKSPACE</span><h2>Control<br /><em>the move.</em></h2><p>Booking, tracking, pickup, RTO, billing, reports, and support—connected around the shipment.</p><div className="capability-list">{capabilities.map((item, index) => <div key={item}><span>0{index + 1}</span><strong>{item}</strong><Arrow /></div>)}</div></div></div><PanelSnapshotGrid /><p className="creative-note">* Creative presentation: these panel views are composed as marketing proof; live product behaviour and shipment data remain in the authenticated PSS workspaces.</p></section>
-    <section className="proof-strip section-shell" aria-label="PSS operational proof">{proofPoints.map(([label, text]) => <div key={label}><span>{label}</span><strong>{text}</strong></div>)}</section>
-    <ShipmentStory />
-    <section className="services" id="services"><div className="section-shell"><div className="section-topline"><span className="section-number">06 / THE NETWORK</span><span>ONE STANDARD, EVERY MODE</span></div><div className="services-heading"><h2>Every route<br /><em>has a rhythm.</em></h2><p>Commercial and courier logistics for the moments that cannot wait.</p></div><div className="service-list">{services.map(([number, title, text]) => <a className="service-row" href="#start" key={title}><span>{number}</span><h3>{title}</h3><p>{text}</p><Arrow /></a>)}</div></div></section>
-    <AudienceGrid />
-    <section className="tracking-proof section-shell"><div className="proof-head"><span className="orange-kicker">WHEN THE SHIPMENT MOVES</span><h2>Know the story<br /><em>behind the status.</em></h2><p className="proof-lede">The public view starts with a reference. The authenticated workspace carries the full event history, provider milestones, and operational context.</p><a className="line-link" href="#track">Try the live tracker <Arrow /></a></div><div className="proof-board proof-board-real"><Image src="/panel-previews/tracking.png" alt="PSS Logistics tracking panel with LR, AWB, and shipment timeline" width={528} height={666} sizes="(max-width: 900px) 100vw, 50vw" /><div className="proof-board-label"><span>REAL PANEL SNAPSHOT</span><strong>LR / AWB / STATUS HISTORY</strong></div></div></section>
-    <section className="rhythm"><div className="section-shell rhythm-inner"><span className="section-number">07 / THE RHYTHM</span><h2>Book. Move. Track.<br /><em>Keep going.</em></h2><div className="rhythm-steps">{[["01", "Book", "Start with the right details."], ["02", "Move", "Coordinate every handoff."], ["03", "Track", "See what is happening now."], ["04", "Resolve", "Act before exceptions grow."], ["05", "Reconcile", "Close the loop clearly."]].map(([number, title, text]) => <div key={number}><span>{number}</span><h3>{title}</h3><p>{text}</p></div>)}</div></div></section>
-    <section className="final-cta section-shell" id="start"><div className="cta-image"><div className="cta-image-text">PSS<br /><span>LOGISTICS</span></div></div><div className="cta-copy"><span className="orange-kicker">DIRECT TO EVERY DIRECTION</span><h2>Ready to<br /><em>move?</em></h2><p>Build a clearer way to run your shipments.</p><a className="orange-button" href="https://client.psslogistics.in/sign-up">Start shipping <Arrow /></a><a className="line-link" href="https://client.psslogistics.in/sign-in">Track a shipment <Arrow /></a></div></section>
-    <footer className="site-footer section-shell"><a className="footer-brand" href="#top"><Image src="/brand/pss-logo.png" alt="PSS Logistics" width={154} height={77} priority /></a><span>Operational clarity for every shipment.</span><div><a href="#services">Services</a><a href="#track">Track</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="mailto:hello@psslogistics.in">Contact</a><a href="#top">Back to top ↑</a></div></footer></main>;
+  return <main className="overhaul"><script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(organizationSchema) }} /><script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify(serviceSchema) }} /><header className={`overhaul-header${hasScrolled ? " is-scrolled" : ""}`}><a className="overhaul-logo" href="#top"><Image src="/brand/pss-logo.png" alt="PSS Logistics — Direct to every direction" width={184} height={92} priority /></a><nav aria-label="Primary navigation"><a href="#network">Network</a><a href="#platform">Product</a><a href="#track">Track</a><a href="#about">About</a></nav><div className="overhaul-actions"><a href="https://client.psslogistics.in/sign-in">Sign in</a><a className="overhaul-button" href="https://client.psslogistics.in/sign-up">Start shipping <Arrow /></a></div></header>
+    <section className="overhaul-hero" id="top"><div className="hero-noise" /><div className="hero-grid" /><div className="hero-copy"><span className="overline orange">PSS LOGISTICS / THE SHIPMENT OPERATING SYSTEM</span><h1>Every shipment<br /><em>has a story.</em></h1><p>We keep the booking, the handoff, the exception, and the outcome connected.</p><div className="hero-actions"><a className="overhaul-button" href="#platform">Enter the control room <Arrow /></a><a className="text-link" href="#network">See the network <Arrow /></a></div><div className="hero-index"><span>THE NETWORK IS ALIVE</span><span>28° 38′ N / 77° 13′ E</span></div></div><RouteField /><div className="hero-scroll">SCROLL TO MOVE <span>↓</span></div><TrackingCommand /></section>
+    <div className="signal-ticker"><div>BOOK <b>✦</b> MANIFEST <b>✦</b> MOVE <b>✦</b> TRACK <b>✦</b> RESOLVE <b>✦</b> RECONCILE <b>✦</b> BOOK <b>✦</b> MANIFEST <b>✦</b> MOVE <b>✦</b> TRACK <b>✦</b></div></div>
+    <section className="manifest-reveal section-shell" id="about"><div><span className="overline">01 / THE IDEA</span><h2>Not a delivery<br /><em>website.</em></h2></div><div className="manifest-reveal-copy"><p>Logistics is a chain of decisions. PSS gives every person in that chain one clear place to see what changed, what matters, and what to do next.</p><a className="text-link" href="#platform">Follow one shipment <Arrow /></a></div></section>
+    <section className="lifecycle section-shell" id="network"><div className="lifecycle-head"><span className="overline">THE SHIPMENT / IN FOUR SIGNALS</span><span>FROM FIRST DETAIL TO FINAL PROOF</span></div><div className="lifecycle-title"><h2>Move with<br /><em>direction.</em></h2><p>The product and the promise are the same: fewer blind spots between here and there.</p></div><div className="lifecycle-rail">{lifecycle.map(([number, title, text], index) => <div className={index === 1 ? "is-current" : ""} key={number}><span>{number}</span><i /><strong>{title}</strong><p>{text}</p></div>)}</div></section>
+    <ProductProof />
+    <ExceptionTheatre />
+    <section className="finance-proof section-shell"><div className="finance-copy"><span className="overline">04 / THE COMMERCIAL STORY</span><h2>Know what the move<br /><em>means.</em></h2><p>Client billing, provider cost, reconciled weight, and margin belong in the same operational picture.</p><a className="text-link" href="https://master-pss.vercel.app/finance/margins">See margin visibility <Arrow /></a></div><div className="finance-card"><div className="finance-card-head"><span>SHIPMENT ECONOMICS</span><b>DEMO VIEW *</b></div><div className="finance-row"><span>CLIENT PAID</span><strong>₹ 1,350.39</strong></div><div className="finance-row"><span>PROVIDER COST</span><strong>₹ 1,106.20</strong></div><div className="finance-row muted"><span>RECONCILED WEIGHT</span><strong>20 KG</strong></div><div className="finance-total"><span>VISIBLE MARGIN</span><strong>₹ 244.19</strong><small>Example presentation · verify against live records.</small></div></div></section>
+    <section className="services-overhaul"><div className="section-shell"><div className="services-overhaul-head"><span className="overline lime">05 / THE WORK</span><h2>One workspace.<br /><em>Every pressure.</em></h2><p>For the teams who book, move, track, resolve, and reconcile freight every day.</p></div><div className="service-list-overhaul">{services.map(([number, title, text]) => <a href="#platform" key={number}><span>{number}</span><strong>{title}</strong><p>{text}</p><Arrow /></a>)}</div></div></section>
+    <section className="final-overhaul section-shell"><div className="final-overhaul-image"><Image src="/hero/freight-handoff.png" alt="A labelled shipment being handed over at a freight warehouse" fill sizes="(max-width: 900px) 100vw, 55vw" /><span>DIRECT TO<br /><strong>EVERY DIRECTION</strong></span></div><div className="final-overhaul-copy"><span className="overline orange">THE NEXT MOVE</span><h2>Make the<br /><em>route clear.</em></h2><p>Bring every shipment signal into focus with PSS Logistics.</p><a className="overhaul-button" href="https://client.psslogistics.in/sign-up">Start shipping <Arrow /></a><a className="text-link" href="https://client.psslogistics.in/sign-in">Sign in to your workspace <Arrow /></a></div></section>
+    <footer className="overhaul-footer section-shell"><a className="overhaul-logo" href="#top"><Image src="/brand/pss-logo.png" alt="PSS Logistics" width={154} height={77} /></a><span>Operational clarity for every shipment.</span><div><a href="#network">Network</a><a href="#platform">Product</a><a href="/privacy">Privacy</a><a href="/terms">Terms</a><a href="mailto:hello@psslogistics.in">Contact</a></div></footer>
+  </main>;
 }
